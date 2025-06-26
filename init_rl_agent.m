@@ -1,3 +1,5 @@
+run("rl_init_parameters.m")
+
 obsInfo = rlNumericSpec([4 1],...
     'LowerLimit',[0 -inf 0 0]',...
     'UpperLimit',[ inf  inf inf 1]');
@@ -11,7 +13,7 @@ numActions = numel(actInfo);
 
 env = rlSimulinkEnv("moonlander_man", "moonlander_man/RL Agent", obsInfo, actInfo);
 
-Ts = 1.0;
+Ts = 0.1;
 Tf = 200;
 
 % Observation path
@@ -25,9 +27,9 @@ actPath = featureInputLayer(actInfo.Dimension(1), ...
 % Common path
 commonPath = [
     concatenationLayer(1,2,Name="concat")
-    fullyConnectedLayer(25)
+    fullyConnectedLayer(250)
     reluLayer()
-    fullyConnectedLayer(25)
+    fullyConnectedLayer(150)
     reluLayer()
     fullyConnectedLayer(1,Name="QValue")
     ];
@@ -58,14 +60,14 @@ critic = rlQValueFunction(criticNet, ...
 getValue(critic, ...
     {rand(obsInfo.Dimension)}, ...
     {rand(actInfo.Dimension)})
-critic.UseDevice = "gpu";
+%critic.UseDevice = "gpu";
 
 % Actor
 actorNet = [
     featureInputLayer(obsInfo.Dimension(1))
-    fullyConnectedLayer(25)
+    fullyConnectedLayer(250)
     reluLayer()
-    fullyConnectedLayer(25)
+    fullyConnectedLayer(150)
     reluLayer()
     fullyConnectedLayer(actInfo.Dimension(1))
     ];
@@ -77,20 +79,20 @@ summary(actorNet)
 % plot(actorNet)
 
 actor = rlContinuousDeterministicActor(actorNet,obsInfo,actInfo);
-actor.UseDevice = "gpu";
+%actor.UseDevice = "gpu";
 
 agent = rlDDPGAgent(actor,critic);
 
 agent.AgentOptions.SampleTime = Ts;
 agent.AgentOptions.DiscountFactor = 0.99;
-agent.AgentOptions.MiniBatchSize = 400;
+agent.AgentOptions.MiniBatchSize = 128;
 agent.AgentOptions.ExperienceBufferLength = 1e6;
 
 actorOpts = rlOptimizerOptions( ...
     LearnRate=1e-4, ...
     GradientThreshold=1);
 criticOpts = rlOptimizerOptions( ...
-    LearnRate=1e-3, ...
+    LearnRate=1e-4, ...
     GradientThreshold=1);
 agent.AgentOptions.ActorOptimizerOptions = actorOpts;
 agent.AgentOptions.CriticOptimizerOptions = criticOpts;
@@ -101,11 +103,11 @@ agent.AgentOptions.NoiseOptions.StandardDeviationDecayRate = 1e-5;
 % training options maxsteps ceil(Tf/Ts)
 trainOpts = rlTrainingOptions(...
     MaxEpisodes=10000, ...
-    MaxStepsPerEpisode=500, ...
+    MaxStepsPerEpisode=1000, ...
     Plots="training-progress", ...
     Verbose=false, ...
-    StopTrainingCriteria="EvaluationStatistic", ...
-    StopTrainingValue=3000, UseParallel=true, ...
+    StopTrainingCriteria="AverageReward", ...
+    StopTrainingValue=2000, UseParallel=true, ...
     SaveAgentCriteria="EpisodeReward", ...
     SaveAgentValue=1000); %UseParallel=true
 
