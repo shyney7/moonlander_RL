@@ -7,7 +7,7 @@ obsInfo.Name = 'observations';
 obsInfo.Description = 'altitude, velocity, fuel consumed and fail boolean';
 numObservations = obsInfo.Dimension(1);
 
-actInfo = rlNumericSpec([1 1], 'LowerLimit', 0, 'UpperLimit', 100);
+actInfo = rlNumericSpec([1 1], 'LowerLimit', 0, 'UpperLimit', 1);
 actInfo.Name = 'thrust';
 numActions = numel(actInfo);
 
@@ -109,10 +109,11 @@ trainOpts = rlTrainingOptions(...
     StopTrainingCriteria="AverageReward", ...
     StopTrainingValue=2000, UseParallel=true, ...
     SaveAgentCriteria="EpisodeReward", ...
-    SaveAgentValue=1000); %UseParallel=true
+    SaveAgentValue=1500); %UseParallel=true
 
 % agent evaluator
 evl = rlEvaluator(EvaluationFrequency=10,NumEpisodes=5);
+%% 
 
 rng(0,"twister");
 
