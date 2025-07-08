@@ -1,10 +1,10 @@
 run("rl_init_parameters.m")
 
-obsInfo = rlNumericSpec([4 1],...
-    'LowerLimit',[0 -inf 0 0]',...
-    'UpperLimit',[ inf  inf inf 1]');
+obsInfo = rlNumericSpec([8 1],...
+    'LowerLimit',[0 -inf 0 0 -inf -inf -inf -inf]',...
+    'UpperLimit',[inf inf inf 1 inf inf inf inf]');
 obsInfo.Name = 'observations';
-obsInfo.Description = 'altitude, velocity, fuel consumed and fail boolean';
+obsInfo.Description = 'altitude, velocity, fuel consumed, fail boolean, alt_err, alt_err_dx, vel_err, vel_err_dx';
 numObservations = obsInfo.Dimension(1);
 
 actInfo = rlNumericSpec([1 1], 'LowerLimit', 0, 'UpperLimit', 1);
