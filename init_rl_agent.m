@@ -1,125 +1,141 @@
+previousRngState = rng(0,"twister");
 run("rl_init_parameters.m")
 
-obsInfo = rlNumericSpec([3 1],...
+nObs = 3;  % Number of dimension of the observation space
+nAct = 1;   % Number of dimension of the action space
+
+
+obsInfo = rlNumericSpec([nObs 1],...
     'LowerLimit',[-inf 0 0]',...
     'UpperLimit',[inf inf 1]');
 obsInfo.Name = 'observations';
 obsInfo.Description = 'velocity, altitude, success';
 numObservations = obsInfo.Dimension(1);
 
-actInfo = rlNumericSpec([1 1], 'LowerLimit', 0.0, 'UpperLimit', 1.0);
+actInfo = rlNumericSpec([nAct 1]);
 actInfo.Name = 'thrust';
+actInfo.LowerLimit = -1;
+actInfo.UpperLimit = 1;
 numActions = numel(actInfo);
 
 env = rlSimulinkEnv("moonlander_man", "moonlander_man/RL Agent", obsInfo, actInfo);
 
 Ts = 0.1;
-Tf = 300000;
-
-rng(871263721)
+Tf = 300000
 
 %% State inputh path
-actorNet = [
-    featureInputLayer(obsInfo.Dimension(1),'Normalization','none','Name','state')
-    fullyConnectedLayer(256,'Name','fc1')
-    reluLayer('Name','relu1')
-    fullyConnectedLayer(128,'Name','fc2')
-    reluLayer('Name','relu2')
-    fullyConnectedLayer(actInfo.Dimension(1),'Name','fc3')
-    tanhLayer('Name','tanh')          % in [‑1,1]
-    scalingLayer('Name','ActorScaling','Scale',0.5, 'Bias', 0.5)];  %scale [0,1]
-
-actorNet = dlnetwork(actorNet);
-%plot(actorNet);
-actorNet = initialize(actorNet);
-actor = rlContinuousDeterministicActor(actorNet,obsInfo,actInfo);
-
-%% Critic: takes (state, action) → Q-value
-statePathCritic = [
-    featureInputLayer(obsInfo.Dimension(1),'Normalization','none','Name','state')
-    fullyConnectedLayer(256,'Name','fc1')
+rng(0,"twister");
+% Define the network paths.
+observationPath = [
+    featureInputLayer(nObs,Name="observation")
+    concatenationLayer(1,2,Name="concat")
+    fullyConnectedLayer(128)
+    reluLayer
+    fullyConnectedLayer(64)
+    reluLayer
+    fullyConnectedLayer(32)
+    reluLayer
+    fullyConnectedLayer(1,Name="QValueOutLyr")
     ];
-actionPathCritic = [
-    featureInputLayer(actInfo.Dimension(1),'Normalization','none','Name','action')
-    fullyConnectedLayer(256,'Name','fc2')];
-
+actionPath = featureInputLayer(nAct,Name="action");
+% Assemble dlnetwork object for critic
+criticNet = dlnetwork;
+criticNet = addLayers(criticNet, observationPath);
+criticNet = addLayers(criticNet, actionPath);
+criticNet = connectLayers(criticNet,"action","concat/in2");
+%plot(criticNet)
+summary(initialize(criticNet))
+critic1 = rlQValueFunction(initialize(criticNet), ...
+    obsInfo,actInfo, ...
+    ObservationInputNames="observation");
+critic2 = rlQValueFunction(initialize(criticNet), ...
+    obsInfo,actInfo, ...
+    ObservationInputNames="observation");
+%% Create Actor
+rng(0,"twister");
+% Create the actor network layers.
 commonPath = [
-    additionLayer(2,'Name','add')
-    reluLayer('Name','c_relu2')
-    fullyConnectedLayer(128,'Name','c_fc3')
-    reluLayer('Name','c_relu3')
-    fullyConnectedLayer(1,'Name','qValue')];
+    featureInputLayer(nObs,Name="observation")
+    fullyConnectedLayer(128)
+    reluLayer
+    fullyConnectedLayer(64)
+    reluLayer(Name="commonPath")
+    ];
+meanPath = [
+    fullyConnectedLayer(32,Name="meanFC")
+    reluLayer
+    fullyConnectedLayer(nAct,Name="actionMean")
+    ];
+stdPath = [
+    fullyConnectedLayer(nAct,Name="stdFC")
+    reluLayer
+    softplusLayer(Name="actionStd")
+    ];
+actorNet = dlnetwork;
+actorNet = addLayers(actorNet,commonPath);
+actorNet = addLayers(actorNet,meanPath);
+actorNet = addLayers(actorNet,stdPath);
+actorNet = connectLayers(actorNet,"commonPath","meanFC/in");
+actorNet = connectLayers(actorNet,"commonPath","stdFC/in");
 
-criticNet = dlnetwork();
-criticNet = addLayers(criticNet, statePathCritic);
-criticNet = addLayers(criticNet, actionPathCritic);
-criticNet = addLayers(criticNet, commonPath);
+%View the actor neural network.
+%plot(actorNet)
+actorNet = initialize(actorNet);
+summary(actorNet)
+actor = rlContinuousGaussianActor(actorNet, obsInfo, actInfo, ...
+    ObservationInputNames="observation", ...
+    ActionMeanOutputNames="actionMean", ...
+    ActionStandardDeviationOutputNames="actionStd");
 
-% connect layers
-criticNet = connectLayers(criticNet, 'fc1', 'add/in1');
-criticNet = connectLayers(criticNet, 'fc2', 'add/in2');
-%plot(criticNet);
-
-summary(initialize(criticNet));
-
-critic1 = rlQValueFunction(initialize(criticNet), obsInfo, actInfo);
-critic2 = rlQValueFunction(initialize(criticNet), obsInfo, actInfo);
 %% GPU Setup
 actor.UseDevice = "gpu";
 critic1.UseDevice = "gpu";
 critic2.UseDevice = "gpu";
-%% ExplorationModel
-%expModel = rl.option.GaussianActionNoise;
-%expModel.LowerLimit = 0.0;
-%expModel.UpperLimit = 100.0;
-%% Agent Options
-agentOpts = rlTD3AgentOptions(...
-    SampleTime=Ts, ...
-    DiscountFactor=0.99, ...
-    ExperienceBufferLength=200000, ...
-    MiniBatchSize=1024);
-%agentOpts.NoiseOptions.Variance = 0.1;      % exploration noise
-%agentOpts.TargetSmoothFactor = 5e-3;       % soft update
 
-% Critic optimizer options
-for idx = 1:2
-    agentOpts.CriticOptimizerOptions(idx).LearnRate = 1e-3;
-    agentOpts.CriticOptimizerOptions(idx).GradientThreshold = 1;
-    agentOpts.CriticOptimizerOptions(idx).L2RegularizationFactor = 1e-3;
+%% Create Agent Opj
+agentOpts = rlSACAgentOptions( ...
+    SampleTime             = Ts, ...
+    ExperienceBufferLength = 1e6, ...
+    NumWarmStartSteps      = 1e3, ...
+    MiniBatchSize          = 300, ...
+    DiscountFactor=0.99);
+agentOpts.EntropyWeightOptions.TargetEntropy = -2;
+
+agentOpts.ActorOptimizerOptions.Algorithm = "adam";
+agentOpts.ActorOptimizerOptions.LearnRate = 3e-4;
+agentOpts.ActorOptimizerOptions.GradientThreshold = 1;
+
+for ct = 1:2
+    agentOpts.CriticOptimizerOptions(ct).Algorithm = "adam";
+    agentOpts.CriticOptimizerOptions(ct).LearnRate = 3e-4;
+    agentOpts.CriticOptimizerOptions(ct).GradientThreshold = 1;
 end
 
-% Actor optimizer options
-agentOpts.ActorOptimizerOptions.LearnRate = 1e-3;
-agentOpts.ActorOptimizerOptions.GradientThreshold = 1;
-agentOpts.ActorOptimizerOptions.L2RegularizationFactor = 1e-3;
-
-% agentOpts.ExplorationModel.StandardDeviationMin =  0.05;
-agentOpts.ExplorationModel.LowerLimit = 0.0;
-agentOpts.ExplorationModel.UpperLimit = 100.0;
-agentOpts.ExplorationModel.StandardDeviation = 0.2;
-% 
-% agentOpts.TargetPolicySmoothModel.StandardDeviation = 0.1;
-
-agent = rlTD3Agent(actor,[critic1,critic2],agentOpts);
+rng(0,"twister");
+agent = rlSACAgent(actor,[critic1,critic2],agentOpts);
 
 %% 3.4. Training Options
 trainOpts = rlTrainingOptions(...
     MaxEpisodes=10000, ...
-    MaxStepsPerEpisode=ceil(Tf/Ts), ...
+    MaxStepsPerEpisode=floor(Tf/Ts), ...
     Verbose=false, ...
     Plots='training-progress', ...
+    ScoreAveragingWindowLength=100, ...
     StopTrainingCriteria='AverageReward', ...
-    StopTrainingValue=300, ...
-    SaveAgentCriteria='AverageReward', ...
+    StopTrainingValue=200, ...
+    SaveAgentCriteria='EpisodeReward', ...
     SaveAgentValue=10, ...
-    UseParallel=true);  
+    UseParallel=true, ...
+    SimulationStorageType="none");  
+trainOpts.ParallelizationOptions.Mode = "async";
 
-evaluator = rlEvaluator(...
-    NumEpisodes=3,...
-    EvaluationFrequency=10);
+% agent evaluation
+evl = rlEvaluator(EvaluationFrequency=100, NumEpisodes=5);
 
-% logging parallel
+%% logging parallel
 Simulink.sdi.enablePCTSupport('local');
 
+rng(0,"twister");
+
 %% 3.5. Train
-trainingStats = train(agent,env,trainOpts, Evaluator=evaluator);
+trainingStats = train(agent,env,trainOpts, Evaluator=evl);
