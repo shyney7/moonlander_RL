@@ -29,11 +29,11 @@ rng(0,"twister");
 observationPath = [
     featureInputLayer(nObs,Name="observation")
     concatenationLayer(1,2,Name="concat")
-    fullyConnectedLayer(128)
+    fullyConnectedLayer(400)
     reluLayer
-    fullyConnectedLayer(64)
+    fullyConnectedLayer(300)
     reluLayer
-    fullyConnectedLayer(32)
+    fullyConnectedLayer(200)
     reluLayer
     fullyConnectedLayer(1,Name="QValueOutLyr")
     ];
@@ -56,13 +56,13 @@ rng(0,"twister");
 % Create the actor network layers.
 commonPath = [
     featureInputLayer(nObs,Name="observation")
-    fullyConnectedLayer(128)
+    fullyConnectedLayer(400)
     reluLayer
-    fullyConnectedLayer(64)
+    fullyConnectedLayer(300)
     reluLayer(Name="commonPath")
     ];
 meanPath = [
-    fullyConnectedLayer(32,Name="meanFC")
+    fullyConnectedLayer(200,Name="meanFC")
     reluLayer
     fullyConnectedLayer(nAct,Name="actionMean")
     ];
@@ -79,7 +79,7 @@ actorNet = connectLayers(actorNet,"commonPath","meanFC/in");
 actorNet = connectLayers(actorNet,"commonPath","stdFC/in");
 
 %View the actor neural network.
-%plot(actorNet)
+plot(actorNet)
 actorNet = initialize(actorNet);
 summary(actorNet)
 actor = rlContinuousGaussianActor(actorNet, obsInfo, actInfo, ...
@@ -96,19 +96,22 @@ critic2.UseDevice = "gpu";
 agentOpts = rlSACAgentOptions( ...
     SampleTime             = Ts, ...
     ExperienceBufferLength = 1e6, ...
-    NumWarmStartSteps      = 1e3, ...
-    MiniBatchSize          = 300, ...
+    NumWarmStartSteps      = 10000, ...
+    MiniBatchSize          = 256, ...
+    NumStepsToLookAhead    = 1, ...
+    TargetSmoothFactor     = 0.01, ...
     DiscountFactor=0.99);
 agentOpts.EntropyWeightOptions.TargetEntropy = -2;
+agentOpts.EntropyWeightOptions.LearnRate = 7.3e-4;
 
 agentOpts.ActorOptimizerOptions.Algorithm = "adam";
-agentOpts.ActorOptimizerOptions.LearnRate = 3e-4;
-agentOpts.ActorOptimizerOptions.GradientThreshold = 1;
+agentOpts.ActorOptimizerOptions.LearnRate = 7.3e-4; %tested: 3e-4
+agentOpts.ActorOptimizerOptions.GradientThreshold = Inf; %1
 
 for ct = 1:2
     agentOpts.CriticOptimizerOptions(ct).Algorithm = "adam";
-    agentOpts.CriticOptimizerOptions(ct).LearnRate = 3e-4;
-    agentOpts.CriticOptimizerOptions(ct).GradientThreshold = 1;
+    agentOpts.CriticOptimizerOptions(ct).LearnRate = 7.3e-4;
+    agentOpts.CriticOptimizerOptions(ct).GradientThreshold = Inf; %1
 end
 
 rng(0,"twister");
