@@ -12,11 +12,9 @@ obsInfo.Name = 'observations';
 obsInfo.Description = 'velocity, altitude, success';
 numObservations = obsInfo.Dimension(1);
 
-actInfo = rlNumericSpec([nAct 1]);
-actInfo.Name = 'thrust';
-actInfo.LowerLimit = -1;
-actInfo.UpperLimit = 1;
-numActions = numel(actInfo);
+actInfo = rlFiniteSetSpec({0,1});
+actInfo.Name = "actions";
+numActions = numel(actInfo.Elements)
 
 env = rlSimulinkEnv("moonlander_man", "moonlander_man/RL Agent", obsInfo, actInfo);
 
@@ -24,98 +22,37 @@ Ts = 0.1;
 Tf = 300000
 
 %% State inputh path
-rng(0,"twister");
-% Define the network paths.
-observationPath = [
-    featureInputLayer(nObs,Name="observation")
-    concatenationLayer(1,2,Name="concat")
-    fullyConnectedLayer(400)
-    reluLayer
-    fullyConnectedLayer(300)
-    reluLayer
-    fullyConnectedLayer(200)
-    reluLayer
-    fullyConnectedLayer(1,Name="QValueOutLyr")
-    ];
-actionPath = featureInputLayer(nAct,Name="action");
-% Assemble dlnetwork object for critic
-criticNet = dlnetwork;
-criticNet = addLayers(criticNet, observationPath);
-criticNet = addLayers(criticNet, actionPath);
-criticNet = connectLayers(criticNet,"action","concat/in2");
-%plot(criticNet)
-summary(initialize(criticNet))
-critic1 = rlQValueFunction(initialize(criticNet), ...
-    obsInfo,actInfo, ...
-    ObservationInputNames="observation");
-critic2 = rlQValueFunction(initialize(criticNet), ...
-    obsInfo,actInfo, ...
-    ObservationInputNames="observation");
-%% Create Actor
-rng(0,"twister");
-% Create the actor network layers.
-commonPath = [
-    featureInputLayer(nObs,Name="observation")
-    fullyConnectedLayer(400)
-    reluLayer
-    fullyConnectedLayer(300)
-    reluLayer(Name="commonPath")
-    ];
-meanPath = [
-    fullyConnectedLayer(200,Name="meanFC")
-    reluLayer
-    fullyConnectedLayer(nAct,Name="actionMean")
-    ];
-stdPath = [
-    fullyConnectedLayer(nAct,Name="stdFC")
-    reluLayer
-    softplusLayer(Name="actionStd")
-    ];
-actorNet = dlnetwork;
-actorNet = addLayers(actorNet,commonPath);
-actorNet = addLayers(actorNet,meanPath);
-actorNet = addLayers(actorNet,stdPath);
-actorNet = connectLayers(actorNet,"commonPath","meanFC/in");
-actorNet = connectLayers(actorNet,"commonPath","stdFC/in");
+initOpts = rlAgentInitializationOptions(NumHiddenUnit=128);
+% actor and critic optimizer options
+actorOpts = rlOptimizerOptions(LearnRate=4e-4, ...
+    GradientThreshold=1);
+criticOpts = rlOptimizerOptions(LearnRate=3e-5, ...
+    GradientThreshold=1);
 
-%View the actor neural network.
-%plot(actorNet)
-actorNet = initialize(actorNet);
-summary(actorNet)
-actor = rlContinuousGaussianActor(actorNet, obsInfo, actInfo, ...
-    ObservationInputNames="observation", ...
-    ActionMeanOutputNames="actionMean", ...
-    ActionStandardDeviationOutputNames="actionStd");
+% agent options
+agentOpts = rlPPOAgentOptions(...
+    ExperienceHorizon       = 1e6,...
+    ActorOptimizerOptions   = actorOpts,...
+    CriticOptimizerOptions  = criticOpts,...
+    MiniBatchSize           = 256,...
+    NumEpoch                = 40,...
+    SampleTime              = Ts,...
+    DiscountFactor          = 0.99, ...
+    ClipFactor              = 0.2, ... 
+    EntropyLossWeight       = 0.01);
+
+% Enable GPU for actor and critic
+%agentOpts.Actor.UseDevice = "gpu";
+%agentOpts.Critic.UseDevice = "gpu";
+
+rng(0,"twister");
+agent = rlPPOAgent(obsInfo, actInfo, initOpts, agentOpts);
+
 
 %% GPU Setup
-actor.UseDevice = "gpu";
-critic1.UseDevice = "gpu";
-critic2.UseDevice = "gpu";
-
-%% Create Agent Opj
-agentOpts = rlSACAgentOptions( ...
-    SampleTime             = Ts, ...
-    ExperienceBufferLength = 1e6, ...
-    NumWarmStartSteps      = 10000, ...
-    MiniBatchSize          = 256, ...
-    NumStepsToLookAhead    = 1, ...
-    TargetSmoothFactor     = 0.01, ...
-    DiscountFactor=0.99);
-agentOpts.EntropyWeightOptions.TargetEntropy = -2;
-agentOpts.EntropyWeightOptions.LearnRate = 7.3e-4;
-
-agentOpts.ActorOptimizerOptions.Algorithm = "adam";
-agentOpts.ActorOptimizerOptions.LearnRate = 7.3e-4; %tested: 3e-4
-agentOpts.ActorOptimizerOptions.GradientThreshold = Inf; %1
-
-for ct = 1:2
-    agentOpts.CriticOptimizerOptions(ct).Algorithm = "adam";
-    agentOpts.CriticOptimizerOptions(ct).LearnRate = 7.3e-4;
-    agentOpts.CriticOptimizerOptions(ct).GradientThreshold = Inf; %1
-end
-
-rng(0,"twister");
-agent = rlSACAgent(actor,[critic1,critic2],agentOpts);
+%actor.UseDevice = "gpu";
+%critic1.UseDevice = "gpu";
+%critic2.UseDevice = "gpu";
 
 %% 3.4. Training Options
 trainOpts = rlTrainingOptions(...
@@ -127,10 +64,9 @@ trainOpts = rlTrainingOptions(...
     StopTrainingCriteria='AverageReward', ...
     StopTrainingValue=480, ...
     SaveAgentCriteria='EpisodeReward', ...
-    SaveAgentValue=400, ...
-    UseParallel=true, ...
+    SaveAgentValue=400, ...%UseParallel=true, ...
     SimulationStorageType="none");  
-trainOpts.ParallelizationOptions.Mode = "async";
+%trainOpts.ParallelizationOptions.Mode = "async";
 
 % agent evaluation
 evl = rlEvaluator(EvaluationFrequency=100, NumEpisodes=5);
